@@ -529,15 +529,15 @@ class TelegramHandlerCloud:
         result = self.network.traceroute(c.args[0])
         await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
 
-    # ── AI Chat (Groq — free, no card needed) ────────────────────────────────
+    # ── AI Chat (OpenAI GPT-4o-mini) ─────────────────────────────────────────
     def _ai_reply(self, user_text: str) -> str:
-        """Send user_text to Groq LLaMA and return response. Falls back gracefully."""
+        """Send user_text to OpenAI GPT and return response. Falls back gracefully."""
         try:
-            groq_key = os.environ.get("GROQ_API_KEY", "")
-            if not groq_key:
+            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            if not openai_key:
                 return None  # No key — fall through to simple replies
-            from groq import Groq
-            client = Groq(api_key=groq_key)
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
 
             # Build context from recent Helix data
             intel  = self.engine.intel.stats()
@@ -551,7 +551,7 @@ class TelegramHandlerCloud:
                 f"If they ask for news or current events, tell them to use /news or /breaking."
             )
             resp = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_ctx},
                     {"role": "user",   "content": user_text},
@@ -584,7 +584,7 @@ class TelegramHandlerCloud:
                 lines.append("Based on what I'm tracking right now:\n")
                 for ev in events[:3]:
                     lines.append(f"• {ev['title'][:80]}")
-                lines.append("\n_For full AI answers: get free GROQ_API_KEY at console.groq.com and add to Render env._")
+                lines.append("\n_AI powered by GPT-4o-mini via OpenAI._")
                 await u.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
             else:
                 await u.message.reply_text(
@@ -594,8 +594,8 @@ class TelegramHandlerCloud:
 
     async def _cmd_voice_info(self, u: Update, c):
         """Tell user how to use voice with Helix."""
-        groq_key = os.environ.get("GROQ_API_KEY", "")
-        status = "✅ Active" if groq_key else "⚠️ Set GROQ_API_KEY in Render env to enable"
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        status = "✅ Active" if openai_key else "⚠️ OPENAI_API_KEY not set"
         await u.message.reply_text(
             "🎙 *VOICE COMMANDS*\n\n"
             "Send me a *voice message* in Telegram and I'll transcribe it and respond!\n\n"
@@ -603,27 +603,23 @@ class TelegramHandlerCloud:
             "1. Tap the 🎙 microphone button in Telegram chat\n"
             "2. Hold to record your message\n"
             "3. Release to send\n"
-            "4. Helix will transcribe (Groq Whisper) and respond (LLaMA 3.3)\n\n"
-            f"*Voice status:* {status}\n\n"
-            "_Groq API is 100% free — get key at console.groq.com_",
+            "4. Helix will transcribe (Whisper) and respond (GPT-4o-mini)\n\n"
+            f"*Voice status:* {status}",
             parse_mode=ParseMode.MARKDOWN
         )
 
     async def _handle_voice(self, u: Update, c):
-        """Handle incoming voice messages — transcribe with Groq Whisper, respond with LLaMA."""
+        """Handle incoming voice messages — transcribe with Whisper, respond with GPT-4o-mini."""
         try:
             voice = u.message.voice or u.message.audio
             if not voice:
                 return
 
-            await u.message.reply_text("🎙 Transcribing with Groq Whisper...")
+            await u.message.reply_text("🎙 Transcribing your voice message...")
 
-            groq_key = os.environ.get("GROQ_API_KEY", "")
-            if not groq_key:
-                await u.message.reply_text(
-                    "⚠️ Voice needs GROQ_API_KEY.\n"
-                    "Free key at console.groq.com → add to Render Environment Variables."
-                )
+            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            if not openai_key:
+                await u.message.reply_text("⚠️ OPENAI_API_KEY not configured.")
                 return
 
             # Download voice file
@@ -632,25 +628,24 @@ class TelegramHandlerCloud:
                 tmp_path = tmp.name
             await file.download_to_drive(tmp_path)
 
-            # Transcribe with Groq Whisper (free)
-            from groq import Groq
-            client = Groq(api_key=groq_key)
+            # Transcribe with Whisper
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
             with open(tmp_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(
-                    model="whisper-large-v3",
+                    model="whisper-1",
                     file=audio_file,
-                    response_format="text",
                 )
             os.unlink(tmp_path)
 
-            transcribed = str(transcript).strip()
+            transcribed = transcript.text.strip()
             if not transcribed:
                 await u.message.reply_text("❌ Couldn't transcribe — try again.")
                 return
 
             await u.message.reply_text(f"🎙 *You said:* _{transcribed}_", parse_mode=ParseMode.MARKDOWN)
 
-            # Respond with LLaMA 3.3 (free)
+            # Respond with GPT-4o-mini
             reply = self._ai_reply(transcribed)
             if reply:
                 await u.message.reply_text(f"🧠 *Helix:*\n{reply}", parse_mode=ParseMode.MARKDOWN)
