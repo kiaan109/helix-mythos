@@ -22,18 +22,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from agents.code_creator import CodeCreatorAgent
 from agents.network_agent import NetworkAgent
+from agents.network_master import NetworkMasterAgent
 
 logger = logging.getLogger("HelixTelegram")
 
 
 class TelegramHandler:
     def __init__(self, engine):
-        self.engine   = engine
-        self.app      = None
-        self._loop    = None
-        self._thread  = None
-        self.coder    = CodeCreatorAgent(engine.memory)
-        self.network  = NetworkAgent(engine.memory)
+        self.engine     = engine
+        self.app        = None
+        self._loop      = None
+        self._thread    = None
+        self.coder      = CodeCreatorAgent(engine.memory)
+        self.network    = NetworkAgent(engine.memory)
+        self.net_master = NetworkMasterAgent(engine.memory)
 
     # ── Bootstrap ─────────────────────────────────────────────────────────────
     def start(self):
@@ -175,6 +177,14 @@ class TelegramHandler:
             "myip":        self._cmd_myip,
             "connections": self._cmd_connections,
             "traceroute":  self._cmd_traceroute,
+
+            # Network Master (home network control)
+            "netmap":      self._cmd_netmap,
+            "block":       self._cmd_block,
+            "unblock":     self._cmd_unblock,
+            "blocked":     self._cmd_blocked,
+            "router":      self._cmd_router,
+            "speedtest":   self._cmd_speedtest,
         }
         for cmd, handler in cmds.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -729,6 +739,63 @@ class TelegramHandler:
         result = await asyncio.get_event_loop().run_in_executor(
             None, self.network.traceroute, host
         )
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # NETWORK MASTER COMMANDS (home network control)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_netmap(self, u: Update, c):
+        """Full ARP scan — show every device on your network with MAC, vendor, OS."""
+        await u.message.reply_text(
+            "📡 *Scanning your network...*\nThis takes ~15 seconds.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.scan_network)
+        for chunk in self._chunk(result, 4000):
+            await u.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_block(self, u: Update, c):
+        """Block a device by IP using Windows Firewall."""
+        if not c.args:
+            await u.message.reply_text(
+                "Usage: /block <ip>\nExample: /block 192.168.1.50\n\n"
+                "Use /netmap first to see all devices and their IPs."
+            )
+            return
+        ip     = c.args[0]
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.block_ip, ip)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_unblock(self, u: Update, c):
+        """Remove a firewall block."""
+        if not c.args:
+            await u.message.reply_text("Usage: /unblock <ip>\nExample: /unblock 192.168.1.50")
+            return
+        ip     = c.args[0]
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.unblock_ip, ip)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_blocked(self, u: Update, c):
+        """List all currently blocked devices."""
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.list_blocked)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_router(self, u: Update, c):
+        """Find gateway/router on the network."""
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.find_router)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_speedtest(self, u: Update, c):
+        """Run internet speed test."""
+        await u.message.reply_text("⚡ Running speed test (10MB via Cloudflare)...", parse_mode=ParseMode.MARKDOWN)
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.net_master.speed_test)
         await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
 
     # ── Utility ───────────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ class HelixEngine:
         from learning.learning_engine         import LearningEngine
         from sandbox.sandbox                  import Sandbox
         from agents.agent_manager             import AgentManager
+        from agents.network_master            import NetworkMasterAgent
         from tg.telegram_handler               import TelegramHandler
 
         logger.info("Initialising subsystems...")
@@ -38,15 +39,19 @@ class HelixEngine:
         # Vision needs a notify callback — wired after telegram starts
         self.vision   = VisionEngine(notify_callback=None)
 
-        self.intel    = GlobalIntelligence(self.memory)
-        self.sandbox  = Sandbox(self.memory)
-        self.agent_mgr = AgentManager(
+        self.intel      = GlobalIntelligence(self.memory)
+        self.sandbox    = Sandbox(self.memory)
+        self.net_master = NetworkMasterAgent(self.memory)
+        self.agent_mgr  = AgentManager(
             self.memory, self.vision, self.learning, self.intel, self.sandbox
         )
         self.telegram = TelegramHandler(self)
 
         # Wire vision → telegram after telegram is created
         self.vision.notify = self._vision_notify
+
+        # Track known network devices for intrusion alerts
+        self._known_network_ips: set = set()
 
         logger.info("All subsystems ready.")
 
@@ -138,10 +143,10 @@ class HelixEngine:
                     self.telegram.send_sync(self._system_status_msg())
                     last_system = now
 
-                # ── System health every 10 min ───────────────────────────────
-                if now - last_system >= 600:
-                    self.telegram.send_sync(self._system_status_msg())
-                    last_system = now
+                # ── Network intrusion watch every 2 min ──────────────────────
+                if now - getattr(self, '_last_net_watch', 0) >= 120:
+                    self._check_new_devices()
+                    self._last_net_watch = now
 
                 # Log cycle
                 self.memory.store("system", "last_cycle",
@@ -231,6 +236,28 @@ class HelixEngine:
             f"Uptime: `{self.uptime()}`"
         )
         return "\n".join(lines)
+
+    # ── Network intrusion detection ───────────────────────────────────────────
+    def _check_new_devices(self):
+        """Alert via Telegram when a new device joins the network."""
+        try:
+            def on_new_device(ip, hostname, mac, vendor):
+                msg = (
+                    f"🚨 *NEW DEVICE ON YOUR NETWORK*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"IP:       `{ip}`\n"
+                    f"Hostname: `{hostname}`\n"
+                    f"MAC:      `{mac}`\n"
+                    f"Vendor:   {vendor}\n\n"
+                    f"Use /block {ip} to block this device."
+                )
+                self.telegram.send_sync(msg)
+
+            self._known_network_ips = self.net_master.watch_new_devices(
+                self._known_network_ips, on_new_device
+            )
+        except Exception as e:
+            logger.debug(f"Network watch error: {e}")
 
     # ── Feed events into learning engine ──────────────────────────────────────
     def _ingest_into_learning(self):
