@@ -24,18 +24,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from agents.code_creator import CodeCreatorAgent
 from agents.network_agent_cloud import NetworkAgentCloud
+from agents.security_agent import SecurityAgent
 
 logger = logging.getLogger("HelixTelegramCloud")
 
 
 class TelegramHandlerCloud:
     def __init__(self, engine):
-        self.engine  = engine
-        self.app     = None
-        self._loop   = None
-        self._thread = None
-        self.coder   = CodeCreatorAgent(engine.memory)
-        self.network = NetworkAgentCloud(engine.memory)
+        self.engine   = engine
+        self.app      = None
+        self._loop    = None
+        self._thread  = None
+        self.coder    = CodeCreatorAgent(engine.memory)
+        self.network  = NetworkAgentCloud(engine.memory)
+        self.security = SecurityAgent(engine.memory)
 
     def start(self):
         self._thread = threading.Thread(
@@ -163,6 +165,23 @@ class TelegramHandlerCloud:
             "speak":       self._cmd_speak,
             "voicenews":   self._cmd_voice_news,
             "voicebreaking": self._cmd_voice_breaking,
+
+            # Security & Pentesting
+            "hash":        self._cmd_hash_identify,
+            "crack":       self._cmd_crack_hash,
+            "genhash":     self._cmd_gen_hash,
+            "genpass":     self._cmd_gen_password,
+            "checkpass":   self._cmd_check_password,
+            "ssl":         self._cmd_ssl,
+            "subdomains":  self._cmd_subdomains,
+            "vulnscan":    self._cmd_vuln_scan,
+            "banner":      self._cmd_banner,
+            "headers":     self._cmd_headers,
+            "sqli":        self._cmd_sqli,
+            "cve":         self._cmd_cve,
+            "osint":       self._cmd_osint,
+            "whois":       self._cmd_whois,
+            "recon":       self._cmd_recon,
         }
         for cmd, handler in cmds.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -232,6 +251,21 @@ class TelegramHandlerCloud:
             "/voicebreaking — Breaking news as audio\n"
             "/mic — How to send voice messages\n"
             "_Send a 🎙 voice message — Helix transcribes + replies in voice!_\n\n"
+            "🔐 *Security & Pentesting*\n"
+            "/recon <domain> — Full recon (subdomains+SSL+headers+vulns)\n"
+            "/vulnscan <host> — Scan for risky open ports\n"
+            "/subdomains <domain> — Enumerate subdomains\n"
+            "/ssl <domain> — SSL/TLS certificate analysis\n"
+            "/headers <url> — Security headers audit\n"
+            "/banner <host> <port> — Service banner grabbing\n"
+            "/sqli <url> — SQL injection test (own sites)\n"
+            "/cve <id or keyword> — CVE lookup (NIST NVD)\n"
+            "/osint <ip/domain> — IP/domain intelligence\n"
+            "/hash <hash> — Identify hash type\n"
+            "/crack <hash> — Crack hash against wordlist\n"
+            "/genhash <text> — Generate MD5/SHA hashes\n"
+            "/genpass [length] — Generate strong password\n"
+            "/checkpass <pass> — Analyze password strength\n\n"
             "⚙️ *System*\n"
             "/status /system /sources /categories\n\n"
             "💬 Type or speak anything to chat!"
@@ -636,16 +670,43 @@ class TelegramHandlerCloud:
             from openai import OpenAI
             client = OpenAI(api_key=openai_key)
 
-            # Build context from recent Helix data
+            # Build rich context from Helix live data
             intel  = self.engine.intel.stats()
             uptime = self.engine.uptime()
+            # Pull recent headlines to give Helix real-time awareness
+            recent = self.engine.memory.get_recent_events(limit=10)
+            headlines = "; ".join(ev.get("title","") for ev in recent[:5]) if recent else "none yet"
+
             system_ctx = (
-                f"You are Helix Mythos, an autonomous AI intelligence system. "
-                f"You are currently monitoring {len(config.NEWS_FEEDS)} global news sources across 17 categories. "
-                f"You have been running for {uptime} and have tracked {intel['total_items']} news items. "
-                f"You are deployed on a cloud server running 24/7. "
-                f"Answer the user's questions, discuss world events, and be helpful and informative. "
-                f"If they ask for news or current events, tell them to use /news or /breaking."
+                "You are Helix Mythos — an advanced autonomous AI with deep expertise across ALL fields of human knowledge. "
+                "You are brilliant, precise, and confident. You give detailed, accurate answers on ANY topic.\n\n"
+
+                "YOUR KNOWLEDGE DOMAINS:\n"
+                "• Science: quantum physics, relativity, thermodynamics, particle physics, string theory, cosmology\n"
+                "• Mathematics: calculus, linear algebra, number theory, topology, statistics, cryptography, algorithms\n"
+                "• Programming: Python, JavaScript, C++, Rust, Go, assembly, reverse engineering, malware analysis, "
+                "  web dev, AI/ML, data science, system design, exploit development\n"
+                "• Cybersecurity: penetration testing, OSINT, network security, cryptanalysis, CTF techniques, "
+                "  vulnerability research, binary exploitation, web app security, social engineering\n"
+                "• Medicine & Biology: anatomy, genetics, neuroscience, pharmacology, virology, biochemistry\n"
+                "• History: ancient civilizations, world wars, geopolitics, revolutions, economics\n"
+                "• Philosophy: logic, ethics, epistemology, metaphysics\n"
+                "• Engineering: electrical, mechanical, civil, aerospace, software\n"
+                "• Finance: markets, trading, DeFi, blockchain, economics, derivatives\n"
+                "• Languages: linguistics, etymology, grammar across human languages\n"
+                "• Current Events: you monitor 185 global news sources in real time\n\n"
+
+                "PERSONALITY: Direct, intelligent, no fluff. Give real answers, not vague summaries. "
+                "If asked to explain something, go deep. If asked to write code, write complete working code. "
+                "If asked about security, give technical accurate details for authorized/educational use.\n\n"
+
+                f"CURRENT STATUS: Running {uptime} | Tracked {intel['total_items']} news items | "
+                f"{len(config.NEWS_FEEDS)} live sources\n"
+                f"RECENT HEADLINES: {headlines}\n\n"
+
+                "For live news/breaking events → direct user to /news /breaking /scan\n"
+                "For security tools → /recon /vulnscan /crack /cve\n"
+                "For everything else → answer directly with full detail."
             )
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -793,3 +854,148 @@ class TelegramHandlerCloud:
                 f"Use /ask <question> to chat, or /help for all commands.",
                 parse_mode=ParseMode.MARKDOWN
             )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECURITY & PENTESTING COMMANDS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_hash_identify(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /hash <hash_value>\nExample: /hash 5f4dcc3b5aa765d61d8327deb882cf99")
+            return
+        result = await asyncio.to_thread(self.security.identify_hash, c.args[0])
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_crack_hash(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /crack <hash>\nExample: /crack 5f4dcc3b5aa765d61d8327deb882cf99")
+            return
+        await u.message.reply_text("🔓 Cracking hash against wordlist...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.crack_hash, c.args[0])
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_gen_hash(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /genhash <text>")
+            return
+        text = " ".join(c.args)
+        result = self.security.generate_hashes(text)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_gen_password(self, u: Update, c):
+        length = int(c.args[0]) if c.args and c.args[0].isdigit() else 20
+        result = self.security.generate_password(length)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_check_password(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /checkpass <password>")
+            return
+        pwd = " ".join(c.args)
+        result = self.security.analyze_password(pwd)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_ssl(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /ssl <domain>\nExample: /ssl google.com")
+            return
+        host = c.args[0].replace("https://","").replace("http://","").split("/")[0]
+        port = int(c.args[1]) if len(c.args) > 1 else 443
+        await u.message.reply_text(f"🔒 Scanning SSL on {host}...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.scan_ssl, host, port)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_subdomains(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /subdomains <domain>\nExample: /subdomains example.com")
+            return
+        domain = c.args[0].replace("https://","").replace("http://","").split("/")[0]
+        await u.message.reply_text(f"🌐 Enumerating subdomains for {domain}...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.find_subdomains, domain)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_vuln_scan(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /vulnscan <host>\nExample: /vulnscan 192.168.1.1")
+            return
+        host = c.args[0]
+        await u.message.reply_text(f"⚠️ Scanning {host} for risky open ports...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.vuln_scan, host)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_banner(self, u: Update, c):
+        if len(c.args) < 2:
+            await u.message.reply_text("Usage: /banner <host> <port>\nExample: /banner example.com 80")
+            return
+        host = c.args[0]
+        port = int(c.args[1])
+        result = await asyncio.to_thread(self.security.grab_banner, host, port)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_headers(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /headers <url>\nExample: /headers https://example.com")
+            return
+        url = c.args[0]
+        await u.message.reply_text(f"🛡 Analyzing security headers for {url}...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.analyze_headers, url)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_sqli(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text(
+                "Usage: /sqli <url>\nExample: /sqli https://yoursite.com/page?id=\n\n"
+                "⚠️ Authorized targets only."
+            )
+            return
+        url = c.args[0]
+        await u.message.reply_text(f"💉 Testing SQL injection on {url}...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.sqli_test, url)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_cve(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /cve <CVE-ID or keyword>\nExamples:\n/cve CVE-2021-44228\n/cve apache log4j")
+            return
+        query = " ".join(c.args)
+        await u.message.reply_text(f"🛡 Looking up CVEs for: {query}...", parse_mode=ParseMode.MARKDOWN)
+        result = await asyncio.to_thread(self.security.cve_lookup, query)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_osint(self, u: Update, c):
+        if not c.args:
+            await u.message.reply_text("Usage: /osint <ip or domain>\nExample: /osint 8.8.8.8")
+            return
+        target = c.args[0]
+        result = await asyncio.to_thread(self.security.whois_lookup, target)
+        await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+
+    async def _cmd_whois(self, u: Update, c):
+        await self._cmd_osint(u, c)
+
+    async def _cmd_recon(self, u: Update, c):
+        """Full recon: subdomains + SSL + headers + vuln scan in one command."""
+        if not c.args:
+            await u.message.reply_text("Usage: /recon <domain>\nExample: /recon example.com\n\nRuns: subdomains + SSL + headers + vuln scan")
+            return
+        domain = c.args[0].replace("https://","").replace("http://","").split("/")[0]
+        await u.message.reply_text(
+            f"🔭 *Full Recon: {domain}*\nRunning: subdomains → SSL → headers → vuln scan...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # Run all recon in parallel
+        sub_task  = asyncio.to_thread(self.security.find_subdomains, domain)
+        ssl_task  = asyncio.to_thread(self.security.scan_ssl, domain)
+        hdr_task  = asyncio.to_thread(self.security.analyze_headers, f"https://{domain}")
+        vuln_task = asyncio.to_thread(self.security.vuln_scan, domain)
+        osint_task= asyncio.to_thread(self.security.whois_lookup, domain)
+
+        results = await asyncio.gather(sub_task, ssl_task, hdr_task, vuln_task, osint_task, return_exceptions=True)
+        labels  = ["🌐 Subdomains", "🔒 SSL", "🛡 Headers", "⚠️ Vuln Ports", "🌍 OSINT"]
+
+        for label, result in zip(labels, results):
+            if isinstance(result, Exception):
+                await u.message.reply_text(f"{label}: error — {result}", parse_mode=ParseMode.MARKDOWN)
+            else:
+                await u.message.reply_text(str(result), parse_mode=ParseMode.MARKDOWN)
