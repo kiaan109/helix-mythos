@@ -562,11 +562,20 @@ class TelegramHandlerCloud:
             return None
 
     async def _send_voice_reply(self, u: Update, text: str):
-        """Send text reply + voice audio in one go."""
+        """Send text instantly, then voice in background — feels instant."""
         await u.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-        audio = self._tts(text)
-        if audio:
-            await u.message.reply_voice(voice=io.BytesIO(audio))
+        # Generate and send TTS in background so text arrives immediately
+        asyncio.create_task(self._send_tts_async(u, text))
+
+    async def _send_tts_async(self, u: Update, text: str):
+        """Generate TTS audio async and send as voice message."""
+        try:
+            import asyncio as _asyncio
+            audio = await _asyncio.to_thread(self._tts, text)
+            if audio:
+                await u.message.reply_voice(voice=io.BytesIO(audio))
+        except Exception as e:
+            logger.error(f"Async TTS error: {e}")
 
     async def _cmd_speak(self, u: Update, c):
         """Convert any text to Helix voice and send as audio."""
@@ -576,20 +585,12 @@ class TelegramHandlerCloud:
             )
             return
         text = " ".join(c.args)
-        await u.message.reply_text("🔊 Generating voice...", parse_mode=ParseMode.MARKDOWN)
-        # Get AI response first if it's a question
-        ai = self._ai_reply(text)
+        # AI reply comes instantly, voice follows in background
+        ai = await asyncio.to_thread(self._ai_reply, text)
         speak_text = ai if ai else text
-        audio = self._tts(speak_text)
-        if audio:
-            if ai:
-                await u.message.reply_text(f"🧠 *Helix:*\n{ai}", parse_mode=ParseMode.MARKDOWN)
-            await u.message.reply_voice(voice=io.BytesIO(audio))
-        else:
-            await u.message.reply_text(
-                f"🧠 *Helix:*\n{speak_text}\n\n_Voice requires OPENAI_API_KEY_",
-                parse_mode=ParseMode.MARKDOWN
-            )
+        if ai:
+            await u.message.reply_text(f"🧠 *Helix:*\n{ai}", parse_mode=ParseMode.MARKDOWN)
+        asyncio.create_task(self._send_tts_async(u, speak_text))
 
     async def _cmd_voice_news(self, u: Update, c):
         """Send latest news summary as a voice message."""
@@ -669,12 +670,10 @@ class TelegramHandlerCloud:
             return
         question = " ".join(c.args)
         await u.message.reply_text("🤔 Thinking...", parse_mode=ParseMode.MARKDOWN)
-        reply = self._ai_reply(question)
+        reply = await asyncio.to_thread(self._ai_reply, question)
         if reply:
             await u.message.reply_text(f"🧠 *Helix:*\n{reply}", parse_mode=ParseMode.MARKDOWN)
-            audio = self._tts(reply)
-            if audio:
-                await u.message.reply_voice(voice=io.BytesIO(audio))
+            asyncio.create_task(self._send_tts_async(u, reply))
         else:
             # No OpenAI key — use news context
             events = self.engine.memory.get_recent_events(limit=5)
@@ -747,14 +746,11 @@ class TelegramHandlerCloud:
 
             await u.message.reply_text(f"🎙 *You said:* _{transcribed}_", parse_mode=ParseMode.MARKDOWN)
 
-            # Respond with GPT-4o-mini text + TTS voice
-            reply = self._ai_reply(transcribed)
+            # AI reply (fast, async) — text arrives instantly, voice follows
+            reply = await asyncio.to_thread(self._ai_reply, transcribed)
             if reply:
                 await u.message.reply_text(f"🧠 *Helix:*\n{reply}", parse_mode=ParseMode.MARKDOWN)
-                # Send voice reply back
-                audio = self._tts(reply)
-                if audio:
-                    await u.message.reply_voice(voice=io.BytesIO(audio))
+                asyncio.create_task(self._send_tts_async(u, reply))
             else:
                 await u.message.reply_text(
                     f"Got it: _{transcribed}_\nType /help for commands.",
@@ -770,8 +766,8 @@ class TelegramHandlerCloud:
         text = u.message.text or ""
         low  = text.lower()
 
-        # Try AI reply first (if OpenAI key is set)
-        ai_response = self._ai_reply(text)
+        # Try AI reply first — runs in thread so bot stays responsive
+        ai_response = await asyncio.to_thread(self._ai_reply, text)
         if ai_response:
             await u.message.reply_text(
                 f"🧠 *Helix:*\n{ai_response}", parse_mode=ParseMode.MARKDOWN
