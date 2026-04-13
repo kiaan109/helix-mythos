@@ -1,0 +1,35 @@
+# Helix Mythos — All Dependencies
+# Run: pip install -r requirements.txt
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+python-telegram-bot>=20.0
+
+# ── Vision & Object Detection ─────────────────────────────────────────────────
+opencv-python
+ultralytics          # YOLOv8 object detection (auto-downloads yolov8n.pt)
+Pillow
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+pytesseract          # needs Tesseract binary: https://github.com/UB-Mannheim/tesseract/wiki
+
+# ── Screen capture ────────────────────────────────────────────────────────────
+pyautogui
+
+# ── Machine Learning ──────────────────────────────────────────────────────────
+scikit-learn
+numpy
+pandas
+scipy
+networkx             # knowledge graph
+
+# ── Intelligence / Web ────────────────────────────────────────────────────────
+feedparser
+requests
+beautifulsoup4
+lxml
+
+# ── System ────────────────────────────────────────────────────────────────────
+psutil
+
+# ── Optional: face recognition (needs cmake + Visual C++ build tools) ─────────
+# face-recognition

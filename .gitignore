@@ -1,0 +1,23 @@
+# Logs
+*.log
+helix_log.json
+
+# Database / model files (too large for GitHub)
+*.db
+*.pkl
+*.pt
+
+# Workspace
+helix_workspace/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Windows artifacts
+Thumbs.db
+
+# Secrets (never commit these)
+.env
+secrets.py

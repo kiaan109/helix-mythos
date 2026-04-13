@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: helix-mythos
+    runtime: python
+    buildCommand: pip install -r requirements_cloud.txt
+    startCommand: python main_cloud.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    plan: free
