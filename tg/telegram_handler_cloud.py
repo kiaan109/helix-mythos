@@ -160,6 +160,9 @@ class TelegramHandlerCloud:
             "ask":         self._cmd_ask,
             "voice":       self._cmd_voice_info,
             "mic":         self._cmd_voice_info,
+            "speak":       self._cmd_speak,
+            "voicenews":   self._cmd_voice_news,
+            "voicebreaking": self._cmd_voice_breaking,
         }
         for cmd, handler in cmds.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -223,9 +226,15 @@ class TelegramHandlerCloud:
             "🧪 *Sandbox*\n"
             "/sandbox — Run built-in experiments\n"
             "/run <code> — Run Python in sandbox\n\n"
+            "🔊 *Voice & Sound*\n"
+            "/speak <text or question> — Helix speaks back to you\n"
+            "/voicenews — Full news briefing as audio\n"
+            "/voicebreaking — Breaking news as audio\n"
+            "/mic — How to send voice messages\n"
+            "_Send a 🎙 voice message — Helix transcribes + replies in voice!_\n\n"
             "⚙️ *System*\n"
             "/status /system /sources /categories\n\n"
-            "💬 Type anything to chat!"
+            "💬 Type or speak anything to chat!"
         )
         await u.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
@@ -529,6 +538,93 @@ class TelegramHandlerCloud:
         result = self.network.traceroute(c.args[0])
         await u.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
 
+    # ── Text-to-Speech (OpenAI TTS) ──────────────────────────────────────────
+    def _tts(self, text: str) -> bytes | None:
+        """Convert text to speech using OpenAI TTS. Returns OGG audio bytes."""
+        try:
+            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            if not openai_key:
+                return None
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            # Clean text for TTS (remove markdown)
+            clean = text.replace("*", "").replace("_", "").replace("`", "").replace("#", "")
+            clean = clean[:4000]  # TTS limit
+            response = client.audio.speech.create(
+                model="tts-1",
+                voice="nova",   # nova = clear female, alloy = neutral, onyx = deep male
+                input=clean,
+                response_format="opus",  # Telegram-compatible
+            )
+            return response.content
+        except Exception as e:
+            logger.error(f"TTS error: {e}")
+            return None
+
+    async def _send_voice_reply(self, u: Update, text: str):
+        """Send text reply + voice audio in one go."""
+        await u.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        audio = self._tts(text)
+        if audio:
+            await u.message.reply_voice(voice=io.BytesIO(audio))
+
+    async def _cmd_speak(self, u: Update, c):
+        """Convert any text to Helix voice and send as audio."""
+        if not c.args:
+            await u.message.reply_text(
+                "Usage: /speak <text>\nExample: /speak What is happening in the world today?"
+            )
+            return
+        text = " ".join(c.args)
+        await u.message.reply_text("🔊 Generating voice...", parse_mode=ParseMode.MARKDOWN)
+        # Get AI response first if it's a question
+        ai = self._ai_reply(text)
+        speak_text = ai if ai else text
+        audio = self._tts(speak_text)
+        if audio:
+            if ai:
+                await u.message.reply_text(f"🧠 *Helix:*\n{ai}", parse_mode=ParseMode.MARKDOWN)
+            await u.message.reply_voice(voice=io.BytesIO(audio))
+        else:
+            await u.message.reply_text(
+                f"🧠 *Helix:*\n{speak_text}\n\n_Voice requires OPENAI_API_KEY_",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+    async def _cmd_voice_news(self, u: Update, c):
+        """Send latest news summary as a voice message."""
+        await u.message.reply_text("🔊 Generating voice news briefing...", parse_mode=ParseMode.MARKDOWN)
+        report = self.engine.intel.get_latest_report() or {}
+        lines  = ["Helix Mythos news briefing. "]
+        count  = 0
+        for cat in config.CATEGORY_ORDER:
+            items = report.get(cat, [])[:2]
+            if items and count < 8:
+                lines.append(f"In {cat}: ")
+                for item in items:
+                    lines.append(item["title"] + ". ")
+                    count += 1
+        if count == 0:
+            lines.append("No news collected yet. Try again in one minute.")
+        briefing = " ".join(lines)
+        audio = self._tts(briefing)
+        if audio:
+            await u.message.reply_voice(voice=io.BytesIO(audio), caption="🎙 Helix Voice News Briefing")
+        else:
+            await u.message.reply_text("⚠️ TTS unavailable — OPENAI_API_KEY not set.")
+
+    async def _cmd_voice_breaking(self, u: Update, c):
+        """Send breaking news as voice."""
+        await u.message.reply_text("🔊 Generating breaking news audio...", parse_mode=ParseMode.MARKDOWN)
+        breaking = self.engine.intel.format_breaking(5)
+        # Strip markdown for TTS
+        clean = breaking.replace("*", "").replace("_", "").replace("`", "").replace("#", "")
+        audio = self._tts("Breaking news from Helix Mythos. " + clean)
+        if audio:
+            await u.message.reply_voice(voice=io.BytesIO(audio), caption="🚨 Breaking News")
+        else:
+            await u.message.reply_text(breaking, parse_mode=ParseMode.MARKDOWN)
+
     # ── AI Chat (OpenAI GPT-4o-mini) ─────────────────────────────────────────
     def _ai_reply(self, user_text: str) -> str:
         """Send user_text to OpenAI GPT and return response. Falls back gracefully."""
@@ -576,6 +672,9 @@ class TelegramHandlerCloud:
         reply = self._ai_reply(question)
         if reply:
             await u.message.reply_text(f"🧠 *Helix:*\n{reply}", parse_mode=ParseMode.MARKDOWN)
+            audio = self._tts(reply)
+            if audio:
+                await u.message.reply_voice(voice=io.BytesIO(audio))
         else:
             # No OpenAI key — use news context
             events = self.engine.memory.get_recent_events(limit=5)
@@ -597,14 +696,17 @@ class TelegramHandlerCloud:
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         status = "✅ Active" if openai_key else "⚠️ OPENAI_API_KEY not set"
         await u.message.reply_text(
-            "🎙 *VOICE COMMANDS*\n\n"
-            "Send me a *voice message* in Telegram and I'll transcribe it and respond!\n\n"
-            "To use voice:\n"
-            "1. Tap the 🎙 microphone button in Telegram chat\n"
-            "2. Hold to record your message\n"
-            "3. Release to send\n"
-            "4. Helix will transcribe (Whisper) and respond (GPT-4o-mini)\n\n"
-            f"*Voice status:* {status}",
+            "🎙 *VOICE & SOUND*\n\n"
+            "*Send voice message:*\n"
+            "Hold 🎙 in Telegram → record → release\n"
+            "Helix transcribes + replies in voice!\n\n"
+            "*Commands:*\n"
+            "/speak <question> — Helix answers in voice\n"
+            "/voicenews — News briefing as audio\n"
+            "/voicebreaking — Breaking news as audio\n"
+            "/ask <question> — AI answer + voice reply\n\n"
+            f"*Status:* {status}\n"
+            "_Powered by Whisper (transcription) + TTS (speech) + GPT-4o-mini (AI)_",
             parse_mode=ParseMode.MARKDOWN
         )
 
@@ -645,10 +747,14 @@ class TelegramHandlerCloud:
 
             await u.message.reply_text(f"🎙 *You said:* _{transcribed}_", parse_mode=ParseMode.MARKDOWN)
 
-            # Respond with GPT-4o-mini
+            # Respond with GPT-4o-mini text + TTS voice
             reply = self._ai_reply(transcribed)
             if reply:
                 await u.message.reply_text(f"🧠 *Helix:*\n{reply}", parse_mode=ParseMode.MARKDOWN)
+                # Send voice reply back
+                audio = self._tts(reply)
+                if audio:
+                    await u.message.reply_voice(voice=io.BytesIO(audio))
             else:
                 await u.message.reply_text(
                     f"Got it: _{transcribed}_\nType /help for commands.",
